@@ -1,0 +1,101 @@
+#!/usr/bin/env python
+
+import boto3;
+import logging
+import json
+import argparse
+import re
+import os
+
+class SnsSubMan:
+
+    def __init__(this, topicName, subscriptions, endpoint_resolver, profile):
+        this.topicName = topicName
+        this.subscriptions = subscriptions
+        this.endpoint_resolver = endpoint_resolver
+        this.profile = profile
+
+        this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
+
+        this.create_topic(topicName, subscriptions),
+
+    def create_topic(this, topicName, subscriptions):
+        logging.info("create topic %s" % topicName)
+        this.topic = this.sns.create_topic(Name=topicName)
+
+        for subscription in subscriptions:
+            protocol, options = subscription.popitem()
+            getattr(this, "subscribe_%s" % protocol)(options)
+
+    def subscribe_sqs(this, queueName):
+
+        logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
+
+        sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
+        sqs.create_queue(QueueName=queueName) 
+
+        queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
+
+        this.sns.subscribe(
+            TopicArn=this.topic['TopicArn'],
+            Protocol='sqs',
+            Endpoint=sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=["QueueArn"])['Attributes']['QueueArn']
+        )
+
+    def subscribe_http(this, endpoint, protocol='http'):
+        endpoint_url = this.endpoint_resolver[endpoint[0]] + endpoint[1] 
+        logging.info("subscribe to http endpoint %s at %s" % (endpoint, endpoint_url))
+
+        this.sns.subscribe(
+            TopicArn=this.topic['TopicArn'],
+            Protocol=protocol,
+            Endpoint=endpoint_url
+        )
+
+    def subscribe_https(this, endpoint):
+        this.subscribe_http(endpoint, 'https')
+
+class NoneEndpointResolver:
+    def __getitem__(*args):
+        return None
+
+class JsonEndpointResolver:
+
+    def __init__(this, filename, profile):
+
+        endpoints = json.loads("".join(filename))
+
+        if not profile in endpoints:
+            raise Exception("Profile with name %s does not exist in %s" % (args.profile, args.endpoints_file.name))
+
+        this.endpoints = endpoints[profile]
+
+    def __getitem__(this, name):    
+        return this.parse_env_vars(this.endpoints[name])
+
+    def parse_env_vars(this, value):
+      output = re.search('%env\(([A-Z0-9_]+)\)%', value)
+
+      if output is not None:
+          envvar = output.group(1)
+          print os.environ[envvar]
+          value = re.sub('%env\(%s\)', envvar, os.environ[envvar])
+   
+      return value
+
+logging.basicConfig(level=logging.INFO)
+
+parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
+parser.add_argument("topic_file", help="The file that contains the topic description", type=argparse.FileType('r'))
+parser.add_argument("--endpoints_file", help="The file that contains the endpoint definitions", type=argparse.FileType('r'))
+parser.add_argument("--profile", help="The profile to use", default="default")
+args = parser.parse_args()
+
+topic = json.loads("".join(args.topic_file.readlines()))
+
+endpoint_resolver = NoneEndpointResolver()
+
+if args.endpoints_file is not None:
+    endpoint_resolver = JsonEndpointResolver(args.endpoints_file.readlines(), args.profile)
+
+snsSubMan = SnsSubMan(topic['name'], topic['subscriptions'], endpoint_resolver, args.profile)
