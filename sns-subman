@@ -9,15 +9,14 @@ import os
 
 class SnsSubMan:
 
-    def __init__(this, topicName, subscriptions, endpoint_resolver, profile):
-        this.topicName = topicName
-        this.subscriptions = subscriptions
+    def __init__(this, config, endpoint_resolver, profile):
         this.endpoint_resolver = endpoint_resolver
         this.profile = profile
 
         this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
 
-        this.create_topic(topicName, subscriptions),
+        for topicName in config['subscriptions']:
+            this.create_topic(topicName, config['subscriptions'][topicName]),
 
     def create_topic(this, topicName, subscriptions):
         logging.info("create topic %s" % topicName)
@@ -32,6 +31,7 @@ class SnsSubMan:
         logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
 
         sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
+        logging.info("create queue %s" % queueName)
         sqs.create_queue(QueueName=queueName) 
 
         queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
@@ -59,16 +59,10 @@ class NoneEndpointResolver:
     def __getitem__(*args):
         return None
 
-class JsonEndpointResolver:
+class tEndpointResolver:
 
-    def __init__(this, filename, profile):
-
-        endpoints = json.loads("".join(filename))
-
-        if not profile in endpoints:
-            raise Exception("Profile with name %s does not exist in %s" % (args.profile, args.endpoints_file.name))
-
-        this.endpoints = endpoints[profile]
+    def __init__(this, config):
+        this.endpoints = config
 
     def __getitem__(this, name):    
         return this.parse_env_vars(this.endpoints[name])
@@ -78,24 +72,26 @@ class JsonEndpointResolver:
 
       if output is not None:
           envvar = output.group(1)
-          print os.environ[envvar]
           value = re.sub('%env\(%s\)', envvar, os.environ[envvar])
-   
+
       return value
 
 logging.basicConfig(level=logging.INFO)
 
 parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
-parser.add_argument("topic_file", help="The file that contains the topic description", type=argparse.FileType('r'))
-parser.add_argument("--endpoints_file", help="The file that contains the endpoint definitions", type=argparse.FileType('r'))
+parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
 parser.add_argument("--profile", help="The profile to use", default="default")
 args = parser.parse_args()
 
-topic = json.loads("".join(args.topic_file.readlines()))
+config = json.loads("".join(args.config.readlines()))
 
 endpoint_resolver = NoneEndpointResolver()
 
-if args.endpoints_file is not None:
-    endpoint_resolver = JsonEndpointResolver(args.endpoints_file.readlines(), args.profile)
+if 'endpoints' in config:
+    if not args.profile in config['endpoints']:
+        raise Exception("Endpoint config with name %s does not exist in %s" % (args.profile, args.config))
+    endpoint_resolver = tEndpointResolver(config['endpoints'][args.profile])
 
-snsSubMan = SnsSubMan(topic['name'], topic['subscriptions'], endpoint_resolver, args.profile)
+snsSubMan = SnsSubMan(config, endpoint_resolver, args.profile)
+
+logging.info("All queues and subscriptions created")
