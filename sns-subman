@@ -7,13 +7,31 @@ import argparse
 import re
 import os
 
-class SnsSubMan:
+class DryRun:
+    def __init__(self):
+        self.url = "http"
+    def __getattr__(self, name):
+        def function(*args, **kwargs):
+            logging.info("[dry-run] %s %s", (name, str(kwargs)))
+        return function
+    def create_queue(self, QueueName):
+        logging.info("[dry-run] create_queue %s", QueueName) 
+        return { "url" : "http", "Attributes" : { "QueueArn" : "000" }}
+    def create_topic(self, Name):
+        logging.info("[dry-run] create_topic %s", Name) 
+        return { "TopicArn" : "aws:000000000000:%s" % Name }
 
-    def __init__(this, config, endpoint_resolver, profile):
+class SnsSubMan:
+    def __init__(this, config, endpoint_resolver, profile, dry_run=False):
         this.endpoint_resolver = endpoint_resolver
         this.profile = profile
+        this.dry_run = dry_run
 
-        this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
+        if this.dry_run:
+            this.sns = DryRun()
+        else:
+            this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
+                
 
         for topicName in config['subscriptions']:
             this.create_topic(topicName, config['subscriptions'][topicName]),
@@ -29,17 +47,27 @@ class SnsSubMan:
     def subscribe_sqs(this, queueName):
 
         logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
+        
+        if this.dry_run:
+            sqs = DryRun()
+        else:            
+            sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
 
-        sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
         logging.info("create queue %s" % queueName)
         sqs.create_queue(QueueName=queueName) 
+    
+        if this.dry_run:
+            queue = DryRun()
+            endpoint="http://127.0.0.1"
+        else:
+            queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
+            endpoint=sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=["QueueArn"])['Attributes']['QueueArn']
 
-        queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
 
         this.sns.subscribe(
             TopicArn=this.topic['TopicArn'],
             Protocol='sqs',
-            Endpoint=sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=["QueueArn"])['Attributes']['QueueArn']
+            Endpoint=endpoint
         )
 
     def subscribe_http(this, endpoint, protocol='http'):
@@ -65,6 +93,8 @@ class tEndpointResolver:
         this.endpoints = config
 
     def __getitem__(this, name):    
+        if not name in this.endpoints:
+            return None
         return this.parse_env_vars(this.endpoints[name])
 
     def parse_env_vars(this, value):
@@ -81,6 +111,7 @@ logging.basicConfig(level=logging.INFO)
 parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
 parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
 parser.add_argument("--profile", help="The profile to use", default="default")
+parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
 args = parser.parse_args()
 
 config = json.loads("".join(args.config.readlines()))
@@ -92,6 +123,6 @@ if 'endpoints' in config:
         raise Exception("Endpoint config with name %s does not exist in %s" % (args.profile, args.config))
     endpoint_resolver = tEndpointResolver(config['endpoints'][args.profile])
 
-snsSubMan = SnsSubMan(config, endpoint_resolver, args.profile)
+snsSubMan = SnsSubMan(config, endpoint_resolver, args.profile, dry_run=args.dry_run)
 
 logging.info("All queues and subscriptions created")
