@@ -37,6 +37,8 @@ class SnsSubMan:
             this.create_topic(topicName, config['subscriptions'][topicName]),
 
     def create_topic(this, topicName, subscriptions):
+        topicName = this.replace_vars(topicName)
+
         logging.info("create topic %s" % topicName)
         this.topic = this.sns.create_topic(Name=topicName)
 
@@ -45,6 +47,8 @@ class SnsSubMan:
             getattr(this, "subscribe_%s" % protocol)(options)
 
     def subscribe_sqs(this, queueName):
+
+        queueName = this.replace_vars(queueName)
 
         logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
         
@@ -82,6 +86,9 @@ class SnsSubMan:
 
     def subscribe_https(this, endpoint):
         this.subscribe_http(endpoint, 'https')
+
+    def replace_vars(this, name):
+        return name.replace("%profile%", this.profile)
 
 class NoneEndpointResolver:
     def __getitem__(*args):
