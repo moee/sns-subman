@@ -8,18 +8,18 @@ import re
 import os
 
 class DryRun:
-    def __init__(self):
-        self.url = "http"
-    def __getattr__(self, name):
-        def function(*args, **kwargs):
-            logging.info("[dry-run] %s %s", (name, str(kwargs)))
-        return function
     def create_queue(self, QueueName):
-        logging.info("[dry-run] create_queue %s", QueueName) 
+        logging.info("[dry-run] AWS sqs.create_queue %s", QueueName) 
         return { "url" : "http", "Attributes" : { "QueueArn" : "000" }}
     def create_topic(self, Name):
-        logging.info("[dry-run] create_topic %s", Name) 
+        logging.info("[dry-run] AWS sns.create_topic %s", Name) 
         return { "TopicArn" : "aws:000000000000:%s" % Name }
+    def subscribe(self, TopicArn, Protocol, Endpoint):
+        logging.info(
+            "[dry-run] AWS sns.subscribe(TopicArn=%s, Protocol=%s, Endpoint=%s)" % (
+                TopicArn, Protocol, Endpoint
+            )
+        )
 
 class SnsSubMan:
     def __init__(this, config, endpoint_resolver, profile, dry_run=False):
