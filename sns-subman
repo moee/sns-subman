@@ -22,7 +22,10 @@ class DryRun:
         )
 
 class SnsSubMan:
+    VERSION = "0.0.3"
+
     def __init__(this, config, endpoint_resolver, dry_run=False):
+
         this.endpoint_resolver = endpoint_resolver
         this.dry_run = dry_run
 
@@ -123,6 +126,8 @@ logging.basicConfig(level=logging.INFO)
 parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
 parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
 parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
+parser.add_argument('--version', action='version', version='sns-subman %s' % SnsSubMan.VERSION)
+
 args = parser.parse_args()
 
 config = json.loads("".join(args.config.readlines()))
