@@ -22,9 +22,8 @@ class DryRun:
         )
 
 class SnsSubMan:
-    def __init__(this, config, endpoint_resolver, profile, dry_run=False):
+    def __init__(this, config, endpoint_resolver, dry_run=False):
         this.endpoint_resolver = endpoint_resolver
-        this.profile = profile
         this.dry_run = dry_run
 
         if this.dry_run:
@@ -32,12 +31,11 @@ class SnsSubMan:
         else:
             this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
                 
-
         for topicName in config['subscriptions']:
-            this.create_topic(topicName, config['subscriptions'][topicName]),
+            this.create_topic(NameParser.parse(topicName), config['subscriptions'][topicName]),
 
     def create_topic(this, topicName, subscriptions):
-        topicName = this.replace_vars(topicName)
+        topicName = NameParser.parse(topicName)
 
         logging.info("create topic %s" % topicName)
         this.topic = this.sns.create_topic(Name=topicName)
@@ -48,7 +46,7 @@ class SnsSubMan:
 
     def subscribe_sqs(this, queueName):
 
-        queueName = this.replace_vars(queueName)
+        queueName = NameParser.parse(queueName)
 
         logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
         
@@ -87,9 +85,6 @@ class SnsSubMan:
     def subscribe_https(this, endpoint):
         this.subscribe_http(endpoint, 'https')
 
-    def replace_vars(this, name):
-        return name.replace("%profile%", this.profile)
-
 class NoneEndpointResolver:
     def __getitem__(*args):
         return None
@@ -102,14 +97,24 @@ class tEndpointResolver:
     def __getitem__(this, name):    
         if not name in this.endpoints:
             return None
-        return this.parse_env_vars(this.endpoints[name])
+        return NameParser.parse(this.endpoints[name])
 
-    def parse_env_vars(this, value):
+
+class NameParser:
+    @staticmethod
+    def parse(value):
+        return NameParser.parse_env_vars(value)
+
+    @staticmethod
+    def parse_env_vars(value):
       output = re.search('%env\(([A-Z0-9_]+)\)%', value)
 
       if output is not None:
           envvar = output.group(1)
-          value = re.sub('%env\(%s\)', envvar, os.environ[envvar])
+          if not envvar in os.environ:
+            raise Exception("environment variable %s is not set" % envvar)
+          value = value.replace('%%env(%s)%%' % envvar, os.environ[envvar])
+          logging.info("result: %s" % (value))
 
       return value
 
@@ -117,7 +122,6 @@ logging.basicConfig(level=logging.INFO)
 
 parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
 parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
-parser.add_argument("--profile", help="The profile to use", default="default")
 parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
 args = parser.parse_args()
 
@@ -126,10 +130,8 @@ config = json.loads("".join(args.config.readlines()))
 endpoint_resolver = NoneEndpointResolver()
 
 if 'endpoints' in config:
-    if not args.profile in config['endpoints']:
-        raise Exception("Endpoint config with name %s does not exist in %s" % (args.profile, args.config))
-    endpoint_resolver = tEndpointResolver(config['endpoints'][args.profile])
+    endpoint_resolver = tEndpointResolver(config['endpoints'])
 
-snsSubMan = SnsSubMan(config, endpoint_resolver, args.profile, dry_run=args.dry_run)
+snsSubMan = SnsSubMan(config, endpoint_resolver, dry_run=args.dry_run)
 
 logging.info("All queues and subscriptions created")
