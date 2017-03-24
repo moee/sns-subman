@@ -6,6 +6,7 @@ import json
 import argparse
 import re
 import os
+import random
 
 class DryRun:
     def create_queue(self, QueueName):
@@ -22,7 +23,7 @@ class DryRun:
         )
 
 class SnsSubMan:
-    VERSION = "0.0.3"
+    VERSION = "0.0.4"
 
     def __init__(this, config, endpoint_resolver, dry_run=False):
 
@@ -47,6 +48,23 @@ class SnsSubMan:
             protocol, options = subscription.popitem()
             getattr(this, "subscribe_%s" % protocol)(options)
 
+    def get_queue_policy(this, queue):
+        try:
+            return json.loads(queue.attributes['Policy'])
+        except KeyError:
+            return {
+              "Version": "2012-10-17",
+              "Id": "%s/SQSDefaultPolicy" % queue.attributes['QueueArn'],
+              "Statement": []
+            }
+
+    def policy_has_permissions_for_topic(this, policy, topic):
+        for statement in policy['Statement']:
+            if statement['Condition']['ArnEquals']['aws:SourceArn'] == topic['TopicArn'] and statement['Effect'] == 'Allow':
+                logging.info("policy permits access for %s. Yay!" % topic['TopicArn'])
+                return True
+        return False
+
     def subscribe_sqs(this, queueName):
 
         queueName = NameParser.parse(queueName)
@@ -59,8 +77,9 @@ class SnsSubMan:
             sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
 
         logging.info("create queue %s" % queueName)
-        sqs.create_queue(QueueName=queueName) 
-    
+        queue = sqs.create_queue(QueueName=queueName) 
+        logging.info("granting topic %s permission to access queue %s" % (this.topic['TopicArn'], queueName))
+        
         if this.dry_run:
             queue = DryRun()
             endpoint="http://127.0.0.1"
@@ -68,6 +87,28 @@ class SnsSubMan:
             queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
             endpoint=sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=["QueueArn"])['Attributes']['QueueArn']
 
+        policy = this.get_queue_policy(queue)
+
+        if not this.policy_has_permissions_for_topic(policy, this.topic):
+            logging.info("permissions are not set yet")
+            policy['Statement'].append(
+                    {
+                        "Sid": "SidSubman%d" % (random.getrandbits(32)),
+                        "Effect": "Allow",
+                        "Principal": {
+                            "AWS": "*"
+                        },
+                        "Action": "SQS:SendMessage",
+                        "Resource": queue.attributes['QueueArn'],
+                        "Condition": {
+                            "ArnEquals": {
+                                "aws:SourceArn": this.topic['TopicArn']
+                                }
+                            }
+                        }
+                    );
+            
+            sqs.set_queue_attributes(QueueUrl=queue.url, Attributes={'Policy': json.dumps(policy)})
 
         this.sns.subscribe(
             TopicArn=this.topic['TopicArn'],
