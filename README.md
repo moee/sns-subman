@@ -3,7 +3,7 @@ Subscription Manager for AWS SNS.
 
 ## Why?
 
-(Automatic) managing SNS subscriptions is pretty cumbersome. Either it involves a lot of commands or a lot of boilerplat code in order to create resources, subscriptions and permissions. The solution - you guessed it: `sns-subman`.
+(Automatic) managing SNS subscriptions is pretty cumbersome. Either it involves a lot of commands or a lot of boilerplate code in order to create resources, subscriptions and permissions. The solution - you guessed it: `sns-subman`.
 
 ## Installation
 
