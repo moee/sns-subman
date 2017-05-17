@@ -10,13 +10,13 @@ import random
 
 class DryRun:
     def create_queue(self, QueueName):
-        logging.info("[dry-run] AWS sqs.create_queue %s", QueueName) 
-        return { "url" : "http", "Attributes" : { "QueueArn" : "000" }}
+        logging.getLogger(SnsSubMan.APPNAME).info("[dry-run] AWS sqs.create_queue %s", QueueName) 
+        return { "url" : "http", "Attributes" : { "QueueArn" : "000", "Policy" : {} }}
     def create_topic(self, Name):
-        logging.info("[dry-run] AWS sns.create_topic %s", Name) 
+        logging.getLogger(SnsSubMan.APPNAME).info("[dry-run] AWS sns.create_topic %s", Name) 
         return { "TopicArn" : "aws:000000000000:%s" % Name }
     def subscribe(self, TopicArn, Protocol, Endpoint):
-        logging.info(
+        logging.getLogger(SnsSubMan.APPNAME).info(
             "[dry-run] AWS sns.subscribe(TopicArn=%s, Protocol=%s, Endpoint=%s)" % (
                 TopicArn, Protocol, Endpoint
             )
@@ -24,8 +24,10 @@ class DryRun:
 
 class SnsSubMan:
     VERSION = "0.0.4"
+    APPNAME = "sns-subman"
 
     def __init__(this, config, endpoint_resolver, dry_run=False):
+        this.logger = logging.getLogger(SnsSubMan.APPNAME)
 
         this.endpoint_resolver = endpoint_resolver
         this.dry_run = dry_run
@@ -41,7 +43,7 @@ class SnsSubMan:
     def create_topic(this, topicName, subscriptions):
         topicName = NameParser.parse(topicName)
 
-        logging.info("create topic %s" % topicName)
+        this.logger.info("create topic %s" % topicName)
         this.topic = this.sns.create_topic(Name=topicName)
 
         for subscription in subscriptions:
@@ -61,7 +63,7 @@ class SnsSubMan:
     def policy_has_permissions_for_topic(this, policy, topic):
         for statement in policy['Statement']:
             if statement['Condition']['ArnEquals']['aws:SourceArn'] == topic['TopicArn'] and statement['Effect'] == 'Allow':
-                logging.info("policy permits access for %s. Yay!" % topic['TopicArn'])
+                this.logger.info("policy permits access for %s. Yay!" % topic['TopicArn'])
                 return True
         return False
 
@@ -69,19 +71,18 @@ class SnsSubMan:
 
         queueName = NameParser.parse(queueName)
 
-        logging.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
+        this.logger.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
         
         if this.dry_run:
             sqs = DryRun()
         else:            
             sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
 
-        logging.info("create queue %s" % queueName)
+        this.logger.info("create queue %s" % queueName)
         queue = sqs.create_queue(QueueName=queueName) 
-        logging.info("granting topic %s permission to access queue %s" % (this.topic['TopicArn'], queueName))
+        this.logger.info("granting topic %s permission to access queue %s" % (this.topic['TopicArn'], queueName))
         
         if this.dry_run:
-            queue = DryRun()
             endpoint="http://127.0.0.1"
         else:
             queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
@@ -90,7 +91,7 @@ class SnsSubMan:
         policy = this.get_queue_policy(queue)
 
         if not this.policy_has_permissions_for_topic(policy, this.topic):
-            logging.info("permissions are not set yet")
+            this.logger.info("permissions are not set yet")
             policy['Statement'].append(
                     {
                         "Sid": "SidSubman%d" % (random.getrandbits(32)),
@@ -118,7 +119,7 @@ class SnsSubMan:
 
     def subscribe_http(this, endpoint, protocol='http'):
         endpoint_url = this.endpoint_resolver[endpoint[0]] + endpoint[1] 
-        logging.info("subscribe to http endpoint %s at %s" % (endpoint, endpoint_url))
+        this.logger.info("subscribe to http endpoint %s at %s" % (endpoint, endpoint_url))
 
         this.sns.subscribe(
             TopicArn=this.topic['TopicArn'],
@@ -158,26 +159,28 @@ class NameParser:
           if not envvar in os.environ:
             raise Exception("environment variable %s is not set" % envvar)
           value = value.replace('%%env(%s)%%' % envvar, os.environ[envvar])
-          logging.info("result: %s" % (value))
+          this.logger.info("result: %s" % (value))
 
       return value
 
-logging.basicConfig(level=logging.INFO)
+if __name__ == "__main__":
+    logging.basicConfig()
+    logging.getLogger(SnsSubMan.APPNAME).setLevel(logging.INFO)
 
-parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
-parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
-parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
-parser.add_argument('--version', action='version', version='sns-subman %s' % SnsSubMan.VERSION)
+    parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
+    parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
+    parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
+    parser.add_argument('--version', action='version', version='%s %s' % (SnsSubMan.APPNAME, SnsSubMan.VERSION))
 
-args = parser.parse_args()
+    args = parser.parse_args()
 
-config = json.loads("".join(args.config.readlines()))
+    config = json.loads("".join(args.config.readlines()))
 
-endpoint_resolver = NoneEndpointResolver()
+    endpoint_resolver = NoneEndpointResolver()
 
-if 'endpoints' in config:
-    endpoint_resolver = tEndpointResolver(config['endpoints'])
+    if 'endpoints' in config:
+        endpoint_resolver = tEndpointResolver(config['endpoints'])
 
-snsSubMan = SnsSubMan(config, endpoint_resolver, dry_run=args.dry_run)
+    snsSubMan = SnsSubMan(config, endpoint_resolver, dry_run=args.dry_run)
 
-logging.info("All queues and subscriptions created")
+    logging.info("All queues and subscriptions created")
