@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import boto3;
+import boto3
 import logging
 import json
 import argparse
@@ -8,19 +8,25 @@ import re
 import os
 import random
 
+
 class DryRun:
     def create_queue(self, QueueName):
-        logging.getLogger(SnsSubMan.APPNAME).info("[dry-run] AWS sqs.create_queue %s", QueueName) 
-        return { "url" : "http", "Attributes" : { "QueueArn" : "000", "Policy" : {} }}
+        logging.getLogger(SnsSubMan.APPNAME).info(
+            "[dry-run] AWS sqs.create_queue %s", QueueName)
+        return {"url": "http", "Attributes": {"QueueArn": "000", "Policy": {}}}
+
     def create_topic(self, Name):
-        logging.getLogger(SnsSubMan.APPNAME).info("[dry-run] AWS sns.create_topic %s", Name) 
-        return { "TopicArn" : "aws:000000000000:%s" % Name }
+        logging.getLogger(SnsSubMan.APPNAME).info(
+            "[dry-run] AWS sns.create_topic %s", Name)
+        return {"TopicArn": "aws:000000000000:%s" % Name}
+
     def subscribe(self, TopicArn, Protocol, Endpoint):
         logging.getLogger(SnsSubMan.APPNAME).info(
             "[dry-run] AWS sns.subscribe(TopicArn=%s, Protocol=%s, Endpoint=%s)" % (
                 TopicArn, Protocol, Endpoint
             )
         )
+
 
 class SnsSubMan:
     VERSION = "0.0.4"
@@ -35,10 +41,12 @@ class SnsSubMan:
         if this.dry_run:
             this.sns = DryRun()
         else:
-            this.sns = boto3.client('sns', endpoint_url=this.endpoint_resolver['sns'])
-                
+            this.sns = boto3.client(
+                'sns', endpoint_url=this.endpoint_resolver['sns'])
+
         for topicName in config['subscriptions']:
-            this.create_topic(NameParser.parse(topicName), config['subscriptions'][topicName]),
+            this.create_topic(NameParser.parse(topicName),
+                              config['subscriptions'][topicName]),
 
     def create_topic(this, topicName, subscriptions):
         topicName = NameParser.parse(topicName)
@@ -55,15 +63,16 @@ class SnsSubMan:
             return json.loads(queue.attributes['Policy'])
         except KeyError:
             return {
-              "Version": "2012-10-17",
-              "Id": "%s/SQSDefaultPolicy" % queue.attributes['QueueArn'],
-              "Statement": []
+                "Version": "2012-10-17",
+                "Id": "%s/SQSDefaultPolicy" % queue.attributes['QueueArn'],
+                "Statement": []
             }
 
     def policy_has_permissions_for_topic(this, policy, topic):
         for statement in policy['Statement']:
             if statement['Condition']['ArnEquals']['aws:SourceArn'] == topic['TopicArn'] and statement['Effect'] == 'Allow':
-                this.logger.info("policy permits access for %s. Yay!" % topic['TopicArn'])
+                this.logger.info(
+                    "policy permits access for %s. Yay!" % topic['TopicArn'])
                 return True
         return False
 
@@ -71,45 +80,51 @@ class SnsSubMan:
 
         queueName = NameParser.parse(queueName)
 
-        this.logger.info("subscribe to sqs queue %s at %s" % (queueName, this.endpoint_resolver['sqs']))
-        
+        this.logger.info("subscribe to sqs queue %s at %s" %
+                         (queueName, this.endpoint_resolver['sqs']))
+
         if this.dry_run:
             sqs = DryRun()
-        else:            
-            sqs = boto3.client('sqs', endpoint_url=this.endpoint_resolver['sqs'])
+        else:
+            sqs = boto3.client(
+                'sqs', endpoint_url=this.endpoint_resolver['sqs'])
 
         this.logger.info("create queue %s" % queueName)
-        queue = sqs.create_queue(QueueName=queueName) 
-        this.logger.info("granting topic %s permission to access queue %s" % (this.topic['TopicArn'], queueName))
-        
+        queue = sqs.create_queue(QueueName=queueName)
+        this.logger.info("granting topic %s permission to access queue %s" % (
+            this.topic['TopicArn'], queueName))
+
         if this.dry_run:
-            endpoint="http://127.0.0.1"
+            endpoint = "http://127.0.0.1"
         else:
-            queue = boto3.resource('sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
-            endpoint=sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=["QueueArn"])['Attributes']['QueueArn']
+            queue = boto3.resource(
+                'sqs', endpoint_url=this.endpoint_resolver['sqs']).get_queue_by_name(QueueName=queueName)
+            endpoint = sqs.get_queue_attributes(QueueUrl=queue.url, AttributeNames=[
+                                                "QueueArn"])['Attributes']['QueueArn']
 
         policy = this.get_queue_policy(queue)
 
         if not this.policy_has_permissions_for_topic(policy, this.topic):
             this.logger.info("permissions are not set yet")
             policy['Statement'].append(
-                    {
-                        "Sid": "SidSubman%d" % (random.getrandbits(32)),
-                        "Effect": "Allow",
-                        "Principal": {
-                            "AWS": "*"
-                        },
-                        "Action": "SQS:SendMessage",
-                        "Resource": queue.attributes['QueueArn'],
-                        "Condition": {
-                            "ArnEquals": {
-                                "aws:SourceArn": this.topic['TopicArn']
-                                }
-                            }
+                {
+                    "Sid": "SidSubman%d" % (random.getrandbits(32)),
+                    "Effect": "Allow",
+                    "Principal": {
+                        "AWS": "*"
+                    },
+                    "Action": "SQS:SendMessage",
+                    "Resource": queue.attributes['QueueArn'],
+                    "Condition": {
+                        "ArnEquals": {
+                            "aws:SourceArn": this.topic['TopicArn']
                         }
-                    );
-            
-            sqs.set_queue_attributes(QueueUrl=queue.url, Attributes={'Policy': json.dumps(policy)})
+                    }
+                }
+            );
+
+            sqs.set_queue_attributes(QueueUrl=queue.url, Attributes={
+                                     'Policy': json.dumps(policy)})
 
         this.sns.subscribe(
             TopicArn=this.topic['TopicArn'],
@@ -118,8 +133,9 @@ class SnsSubMan:
         )
 
     def subscribe_http(this, endpoint, protocol='http'):
-        endpoint_url = this.endpoint_resolver[endpoint[0]] + endpoint[1] 
-        this.logger.info("subscribe to http endpoint %s at %s" % (endpoint, endpoint_url))
+        endpoint_url = this.endpoint_resolver[endpoint[0]] + endpoint[1]
+        this.logger.info("subscribe to http endpoint %s at %s" %
+                         (endpoint, endpoint_url))
 
         this.sns.subscribe(
             TopicArn=this.topic['TopicArn'],
@@ -130,16 +146,18 @@ class SnsSubMan:
     def subscribe_https(this, endpoint):
         this.subscribe_http(endpoint, 'https')
 
+
 class NoneEndpointResolver:
     def __getitem__(*args):
         return None
+
 
 class tEndpointResolver:
 
     def __init__(this, config):
         this.endpoints = config
 
-    def __getitem__(this, name):    
+    def __getitem__(this, name):
         if not name in this.endpoints:
             return None
         return NameParser.parse(this.endpoints[name])
@@ -152,25 +170,29 @@ class NameParser:
 
     @staticmethod
     def parse_env_vars(value):
-      output = re.search('%env\(([A-Z0-9_]+)\)%', value)
+        output = re.search('%env\(([A-Z0-9_]+)\)%', value)
 
-      if output is not None:
-          envvar = output.group(1)
-          if not envvar in os.environ:
-            raise Exception("environment variable %s is not set" % envvar)
-          value = value.replace('%%env(%s)%%' % envvar, os.environ[envvar])
-          this.logger.info("result: %s" % (value))
+        if output is not None:
+            envvar = output.group(1)
+            if not envvar in os.environ:
+                raise Exception("environment variable %s is not set" % envvar)
+            value = value.replace('%%env(%s)%%' % envvar, os.environ[envvar])
+            this.logger.info("result: %s" % (value))
 
-      return value
+        return value
+
 
 if __name__ == "__main__":
     logging.basicConfig()
     logging.getLogger(SnsSubMan.APPNAME).setLevel(logging.INFO)
 
     parser = argparse.ArgumentParser(description='Manage SNS subscriptions')
-    parser.add_argument("config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
-    parser.add_argument("--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
-    parser.add_argument('--version', action='version', version='%s %s' % (SnsSubMan.APPNAME, SnsSubMan.VERSION))
+    parser.add_argument(
+        "config", help="The file that contains the topic and subscription informtion ", type=argparse.FileType('r'))
+    parser.add_argument(
+        "--dry-run", help="Don't do anything, only show what would happen.", action='store_true')
+    parser.add_argument('--version', action='version',
+                        version='%s %s' % (SnsSubMan.APPNAME, SnsSubMan.VERSION))
 
     args = parser.parse_args()
 
